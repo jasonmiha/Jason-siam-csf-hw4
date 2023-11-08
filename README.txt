@@ -1,7 +1,8 @@
 CONTRIBUTIONS
 
-TODO: write a brief summary of how each team member contributed to
-the project.
+Iason: 
+
+Siam:
 
 REPORT
 
