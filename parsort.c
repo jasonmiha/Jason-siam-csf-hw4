@@ -62,17 +62,38 @@ void merge_sort(int64_t *arr, size_t begin, size_t end, size_t threshold) {
   size_t size = end - begin;
 
   if (size <= threshold) {
-    seq_sort(arr, begin, end);
+    qsort(arr + begin, size, sizeof(int64_t), compare_i64);
     return;
   }
 
   // recursively sort halves in parallel
-
   size_t mid = begin + size/2;
 
-  // TODO: parallelize the recursive sorting
-  merge_sort(arr, begin, mid, threshold);
-  merge_sort(arr, mid, end, threshold);
+  pid_t pid1 = fork();
+  if (pid1 == -1) {  // fork failed to start a new process
+    fatal("Failed to create a child process using fork");
+  } else if (pid1 == 0) { // in the child process now
+    merge_sort(arr, begin, mid, threshold);
+    exit(EXIT_SUCCESS);
+  }
+
+  pid_t pid2 = fork();
+  if (pid2 == -1) {  // fork failed to start a new process
+    fatal("Failed to create a child process using fork");
+  } else if (pid2 == 0) { // in the child process now
+    merge_sort(arr, mid, end, threshold);
+    exit(EXIT_SUCCESS);
+  }
+
+  int wstatus1, wstatus2;  // blocks until the process indentified by pid_to_wait_for completes
+  pid_t actual_pid1 = waitpid(pid1, &wstatus1, 0);
+  pid_t actual_pid2 = waitpid(pid2, &wstatus2, 0);
+  if (actual_pid1 == -1 || actual_pid2 == -1) // handle waitpid failure
+    fatal("Waitpid failed");
+
+  if (WIFEXITED(wstatus1) && WEXITSTATUS(wstatus1) != 0) {
+    fatal("Child process failed");
+  }
 
   // allocate temp array now, so we can avoid unnecessary work
   // if the malloc fails
@@ -107,46 +128,39 @@ int main(int argc, char **argv) {
   size_t threshold = (size_t) strtoul(argv[2], &end, 10);
   if (end != argv[2] + strlen(argv[2])) {
     // TODO: report an error (threshold value is invalid)
-    fprintf(stderr, "Error: Invalid threshold value\n");
-    return 1;
+    fatal("Invalid threshold value");
   }
 
-  // TODO: open the file
+  // open the file
   int fd = open(filename, O_RDWR);
-  if (fd < 0) {
-    fprintf(stderr, "Error: File could not be opened\n");
-    return 1;
-  }
+  if (fd < 0) 
+    fatal("File could not be opened");
 
-  // TODO: use fstat to determine the size of the file
+  // use fstat to determine the size of the file
   struct stat statbuf;
   int rc = fstat(fd, &statbuf);
-  if (rc != 0) {
-    fprintf(stderr, "Error: fstat failed\n");
-    return 1;
-  }
+  if (rc != 0)
+    fatal("fstat failed");
   size_t file_size_in_bytes = statbuf.st_size;
 
-  // TODO: map the file into memory using mmap
+  // map the file into memory using mmap
   int64_t *data = mmap(NULL, file_size_in_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  close(fd);
-  if (data == MAP_FAILED) {
-    fprintf(stderr, "Error: Failure to mmap the file data\n");
-    return 1;
-  }
 
-  // TODO: sort the data!
-  int64_t *result;
-  merge_sort(data, 0, sizeof(data), result);
-  pid_t pid = fork();
-  if (pid == -1) {
-    // handle error
-  } else if (pid == 0) {
-    // in child process
-  }
+  // close the file
+  int cl = close(fd);
+  if (cl != 0)
+    fatal("Error: Failure to unmap the file data");
+  if (data == MAP_FAILED)
+    fatal("Failure to mmap the file data");
 
-  // TODO: unmap and close the file
-  munmap(data, file_size_in_bytes);
+  // sort the data!
+  merge_sort(data, 0, file_size_in_bytes/sizeof(int64_t), threshold);
 
-  // TODO: exit with a 0 exit code if sort was successful
+  // unmap and close the file
+  int mun = munmap(data, file_size_in_bytes);
+  if (mun != 0)
+    fatal("Error: Failure to unmap the file data");
+
+  // exit with a 0 exit code if sort was successful
+  exit(EXIT_SUCCESS);
 }
